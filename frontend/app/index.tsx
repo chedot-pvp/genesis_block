@@ -6,14 +6,31 @@ import { useGameStore } from '../src/store/gameStore';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, isLoading, error, user } = useGameStore();
+  const { login, isLoading, error, user, fetchInit, loadSavedSession } = useGameStore();
   const [localLoading, setLocalLoading] = useState(false);
+  const [initialCheck, setInitialCheck] = useState(true);
 
   useEffect(() => {
-    if (user) {
-      router.replace('/(tabs)');
-    }
-  }, [user]);
+    // Check saved session on mount
+    const checkSession = async () => {
+      const savedUser = loadSavedSession();
+      if (savedUser) {
+        try {
+          await fetchInit();
+          // If still has user, navigate to main
+          if (useGameStore.getState().user) {
+            router.replace('/(tabs)');
+            return;
+          }
+        } catch (e) {
+          console.error('Session check failed:', e);
+        }
+      }
+      setInitialCheck(false);
+    };
+    
+    checkSession();
+  }, []);
 
   const handleLogin = async () => {
     setLocalLoading(true);
@@ -41,6 +58,21 @@ export default function LoginScreen() {
       setLocalLoading(false);
     }
   };
+
+  // Show loading while checking session
+  if (initialCheck) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <View style={styles.bitcoinIcon}>
+            <Text style={styles.bitcoinSymbol}>₿</Text>
+          </View>
+          <ActivityIndicator size="large" color="#F7931A" style={{ marginTop: 20 }} />
+          <Text style={styles.loadingText}>Загрузка...</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -103,6 +135,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 24,
   },
+  loadingContainer: {
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#888',
+    marginTop: 16,
+    fontSize: 16,
+  },
   logoContainer: {
     alignItems: 'center',
     marginBottom: 40,
@@ -115,11 +155,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
-    shadowColor: '#F7931A',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
-    elevation: 10,
   },
   bitcoinSymbol: {
     fontSize: 60,

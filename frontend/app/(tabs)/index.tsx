@@ -8,6 +8,7 @@ import {
   RefreshControl,
   Animated,
   Easing,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,10 +16,11 @@ import { useGameStore } from '../../src/store/gameStore';
 import { formatSatoshi, formatHashrate, formatNumber } from '../../src/utils/formatters';
 
 export default function MiningScreen() {
-  const { user, gameState, exchangeRate, instantMine, refreshBlockInfo, fetchInit } = useGameStore();
+  const { user, gameState, exchangeRate, instantMine, refreshBlockInfo, fetchInit, logout } = useGameStore();
   const [refreshing, setRefreshing] = useState(false);
   const [miningReward, setMiningReward] = useState<number | null>(null);
   const [timeToBlock, setTimeToBlock] = useState(30);
+  const [showMenu, setShowMenu] = useState(false);
   
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
@@ -86,6 +88,11 @@ export default function MiningScreen() {
     }
   };
 
+  const handleLogout = () => {
+    logout();
+    setShowMenu(false);
+  };
+
   const spin = rotateAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
@@ -98,6 +105,17 @@ export default function MiningScreen() {
   const progress = gameState
     ? ((gameState.total_mined_satoshi / 2_100_000_000_000_000) * 100).toFixed(4)
     : '0';
+
+  // Get user initials for avatar fallback
+  const getInitials = () => {
+    if (user?.first_name) {
+      return user.first_name.charAt(0).toUpperCase();
+    }
+    if (user?.username) {
+      return user.username.charAt(0).toUpperCase();
+    }
+    return '?';
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -115,6 +133,46 @@ export default function MiningScreen() {
               {formatSatoshi(user?.balance_satoshi || 0)}
             </Text>
           </View>
+          
+          {/* User Avatar */}
+          <TouchableOpacity 
+            style={styles.avatarContainer}
+            onPress={() => setShowMenu(!showMenu)}
+          >
+            {user?.photo_url ? (
+              <Image 
+                source={{ uri: user.photo_url }} 
+                style={styles.avatar}
+              />
+            ) : (
+              <View style={styles.avatarFallback}>
+                <Text style={styles.avatarText}>{getInitials()}</Text>
+              </View>
+            )}
+            <View style={styles.onlineIndicator} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Dropdown Menu */}
+        {showMenu && (
+          <View style={styles.dropdownMenu}>
+            <View style={styles.menuHeader}>
+              <Text style={styles.menuUsername}>
+                {user?.first_name || user?.username || 'Player'}
+              </Text>
+              <Text style={styles.menuHashrate}>
+                {formatHashrate(user?.total_power || 0)}
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
+              <Ionicons name="log-out-outline" size={20} color="#ff4444" />
+              <Text style={styles.menuItemTextRed}>Выйти</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Hashrate Badge */}
+        <View style={styles.hashrateBadgeRow}>
           <View style={styles.hashrateContainer}>
             <Ionicons name="flash" size={16} color="#F7931A" />
             <Text style={styles.hashrateValue}>
@@ -234,7 +292,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 12,
   },
   balanceContainer: {
     flex: 1,
@@ -247,6 +305,89 @@ const styles = StyleSheet.create({
     color: '#F7931A',
     fontSize: 28,
     fontWeight: 'bold',
+  },
+  avatarContainer: {
+    position: 'relative',
+  },
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 2,
+    borderColor: '#F7931A',
+  },
+  avatarFallback: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#1a1a2e',
+    borderWidth: 2,
+    borderColor: '#F7931A',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: {
+    color: '#F7931A',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  onlineIndicator: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#4CAF50',
+    borderWidth: 2,
+    borderColor: '#0a0a14',
+  },
+  dropdownMenu: {
+    position: 'absolute',
+    top: 70,
+    right: 16,
+    backgroundColor: '#1a1a2e',
+    borderRadius: 12,
+    padding: 8,
+    minWidth: 180,
+    zIndex: 1000,
+    borderWidth: 1,
+    borderColor: '#2a2a4e',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  menuHeader: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2a2a4e',
+  },
+  menuUsername: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  menuHashrate: {
+    color: '#F7931A',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 8,
+  },
+  menuItemTextRed: {
+    color: '#ff4444',
+    fontSize: 14,
+    marginLeft: 8,
+  },
+  hashrateBadgeRow: {
+    alignItems: 'flex-end',
+    marginBottom: 12,
   },
   hashrateContainer: {
     flexDirection: 'row',

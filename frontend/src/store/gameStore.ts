@@ -1,11 +1,12 @@
 import { create } from 'zustand';
-import { authApi, gameApi, minersApi, exchangeApi, leaderboardApi, referralApi } from '../api/client';
+import { authApi, gameApi, minersApi } from '../api/client';
 
 export interface User {
   id: string;
   telegram_id: number;
   username: string;
   first_name: string;
+  photo_url?: string;
   total_power: number;
   balance_satoshi: number;
   balance_stars: number;
@@ -40,6 +41,26 @@ export interface ExchangeRate {
   epoch: number;
 }
 
+// Simple localStorage wrapper for web, returns null for native
+const storage = {
+  getItem: (key: string): string | null => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage.getItem(key);
+    }
+    return null;
+  },
+  setItem: (key: string, value: string): void => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(key, value);
+    }
+  },
+  removeItem: (key: string): void => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.removeItem(key);
+    }
+  }
+};
+
 interface GameStore {
   user: User | null;
   gameState: GameState | null;
@@ -57,6 +78,8 @@ interface GameStore {
   refreshBlockInfo: () => Promise<void>;
   setUser: (user: User) => void;
   clearError: () => void;
+  logout: () => void;
+  loadSavedSession: () => User | null;
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -68,16 +91,37 @@ export const useGameStore = create<GameStore>((set, get) => ({
   isLoading: false,
   error: null,
 
+  loadSavedSession: () => {
+    try {
+      const saved = storage.getItem('genesis_user');
+      if (saved) {
+        const user = JSON.parse(saved);
+        set({ user });
+        return user;
+      }
+    } catch (e) {
+      console.error('Failed to load session:', e);
+    }
+    return null;
+  },
+
   login: async (initData: string) => {
     set({ isLoading: true, error: null });
     try {
       const response = await authApi.telegramAuth(initData);
-      const { user, token } = response.data;
+      const { user } = response.data;
+      
+      // Save to storage
+      storage.setItem('genesis_user', JSON.stringify(user));
       set({ user });
       
       // Fetch full init data
       const initResponse = await gameApi.getInit(user.id);
       const data = initResponse.data;
+      
+      // Update storage with full user data
+      storage.setItem('genesis_user', JSON.stringify(data.user));
+      
       set({
         user: data.user,
         gameState: data.game_state,
@@ -100,6 +144,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     try {
       const response = await gameApi.getInit(user.id);
       const data = response.data;
+      
+      // Update storage
+      storage.setItem('genesis_user', JSON.stringify(data.user));
+      
       set({
         user: data.user,
         gameState: data.game_state,
@@ -109,7 +157,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
         isLoading: false,
       });
     } catch (error: any) {
-      set({ error: error.message, isLoading: false });
+      // If user not found, logout
+      if (error.response?.status === 404) {
+        storage.removeItem('genesis_user');
+        set({ user: null, gameState: null, miners: [], userMiners: {}, exchangeRate: null, isLoading: false });
+      } else {
+        set({ error: error.message, isLoading: false });
+      }
     }
   },
 
@@ -120,6 +174,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     try {
       const response = await minersApi.buyMiner(user.id, minerId, quantity);
       const { user: updatedUser, user_miners } = response.data;
+      storage.setItem('genesis_user', JSON.stringify(updatedUser));
       set({ user: updatedUser, userMiners: user_miners });
       return true;
     } catch (error: any) {
@@ -135,6 +190,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     try {
       const response = await gameApi.instantMine(user.id);
       const { reward, user: updatedUser } = response.data;
+      storage.setItem('genesis_user', JSON.stringify(updatedUser));
       set({ user: updatedUser });
       return reward;
     } catch (error: any) {
@@ -152,6 +208,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
   },
 
-  setUser: (user: User) => set({ user }),
+  setUser: (user: User) => {
+    storage.setItem('genesis_user', JSON.stringify(user));
+    set({ user });
+  },
   clearError: () => set({ error: null }),
+  logout: () => {
+    storage.removeItem('genesis_user');
+    set({ 
+      user: null, 
+      gameState: null, 
+      miners: [], 
+      userMiners: {}, 
+      exchangeRate: null 
+    });
+  },
 }));

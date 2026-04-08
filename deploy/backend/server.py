@@ -67,6 +67,7 @@ class User(BaseModel):
     referral_bonus_power: int = 0
     referral_earnings: int = 0
     total_referrals: int = 0
+    photo_url: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     is_active: bool = True
     speed_boost: float = 1.0
@@ -102,6 +103,16 @@ class AdminUser(BaseModel):
     password_hash: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     is_active: bool = True
+
+class BlockHistory(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    block_number: int
+    epoch: int
+    reward_satoshi: int
+    total_distributed: int
+    network_power: int
+    participants: int
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 # ============== REQUEST/RESPONSE MODELS ==============
 
@@ -291,6 +302,17 @@ async def process_block():
         }
     )
     
+    # Save block history
+    block_history = BlockHistory(
+        block_number=new_block,
+        epoch=new_epoch,
+        reward_satoshi=block_reward,
+        total_distributed=total_distributed,
+        network_power=total_power,
+        participants=len(users)
+    ).dict()
+    await db.block_history.insert_one(block_history)
+    
     logging.info(f"Block {new_block} processed. Reward: {block_reward} satoshi. Distributed: {total_distributed} satoshi")
 
 async def block_generation_loop():
@@ -386,6 +408,7 @@ async def telegram_auth(request: TelegramAuthRequest):
             {"$set": {
                 "username": user_data.get('username', ''),
                 "first_name": user_data.get('first_name', ''),
+                "photo_url": user_data.get('photo_url', ''),
                 "is_active": True
             }}
         )
@@ -396,6 +419,7 @@ async def telegram_auth(request: TelegramAuthRequest):
             telegram_id=telegram_id,
             username=user_data.get('username', ''),
             first_name=user_data.get('first_name', ''),
+            photo_url=user_data.get('photo_url', ''),
             total_power=1
         ).dict()
         await db.users.insert_one(user)
@@ -976,6 +1000,20 @@ async def admin_reset_game(token: str):
     
     return {"reset": True}
 
+@api_router.get("/admin/blocks")
+async def admin_get_blocks(token: str, skip: int = 0, limit: int = 50):
+    """Get block history"""
+    if not await verify_admin_token(token):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    blocks = await db.block_history.find().sort("block_number", -1).skip(skip).limit(limit).to_list(limit)
+    total = await db.block_history.count_documents({})
+    
+    for block in blocks:
+        block.pop('_id', None)
+    
+    return {"blocks": blocks, "total": total, "skip": skip, "limit": limit}
+
 # Admin HTML Page
 ADMIN_HTML = '''
 <!DOCTYPE html>
@@ -1058,7 +1096,14 @@ ADMIN_HTML = '''
             
             <div class="stats-grid" id="stats-grid"></div>
             
-            <div class="table-container">
+            <!-- Navigation Tabs -->
+            <div class="nav-tabs">
+                <button class="nav-tab active" onclick="switchTab('users')" id="tab-users">Игроки</button>
+                <button class="nav-tab" onclick="switchTab('blocks')" id="tab-blocks">История блоков</button>
+            </div>
+            
+            <!-- Users Table -->
+            <div id="content-users" class="table-container">
                 <div class="table-header">
                     <h2>Игроки</h2>
                     <button class="btn btn-danger btn-sm" onclick="confirmResetGame()">Сбросить игру</button>
@@ -1077,6 +1122,27 @@ ADMIN_HTML = '''
                         </tr>
                     </thead>
                     <tbody id="users-table"></tbody>
+                </table>
+            </div>
+            
+            <!-- Blocks History Table -->
+            <div id="content-blocks" class="table-container hidden">
+                <div class="table-header">
+                    <h2>История блоков</h2>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Блок #</th>
+                            <th>Эпоха</th>
+                            <th>Награда</th>
+                            <th>Распределено</th>
+                            <th>Хэшрейт сети</th>
+                            <th>Участники</th>
+                            <th>Время</th>
+                        </tr>
+                    </thead>
+                    <tbody id="blocks-table"></tbody>
                 </table>
             </div>
         </div>
@@ -1146,6 +1212,15 @@ ADMIN_HTML = '''
             document.getElementById('admin-page').classList.remove('hidden');
             loadStats();
             loadUsers();
+            loadBlocks();
+        }
+        
+        function switchTab(tab) {
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            document.getElementById('tab-' + tab).classList.add('active');
+            document.getElementById('content-users').classList.add('hidden');
+            document.getElementById('content-blocks').classList.add('hidden');
+            document.getElementById('content-' + tab).classList.remove('hidden');
         }
         
         document.getElementById('login-form').onsubmit = async (e) => {
@@ -1205,6 +1280,22 @@ ADMIN_HTML = '''
                         <button class="btn btn-primary btn-sm" onclick="editUser('${u.id}', ${u.balance_satoshi}, ${u.balance_stars}, ${u.total_power})">Изменить</button>
                         <button class="btn btn-danger btn-sm" onclick="deleteUser('${u.id}')">Удалить</button>
                     </td>
+                </tr>
+            `).join('');
+        }
+        
+        async function loadBlocks() {
+            const res = await fetch(`${API_BASE}/admin/blocks?token=${token}&limit=50`);
+            const data = await res.json();
+            document.getElementById('blocks-table').innerHTML = data.blocks.map(b => `
+                <tr>
+                    <td><strong>#${formatNumber(b.block_number)}</strong></td>
+                    <td>${b.epoch}</td>
+                    <td>${formatSatoshi(b.reward_satoshi)}</td>
+                    <td>${formatSatoshi(b.total_distributed)}</td>
+                    <td>${formatNumber(b.network_power)} H/s</td>
+                    <td>${b.participants}</td>
+                    <td>${new Date(b.created_at).toLocaleString('ru-RU')}</td>
                 </tr>
             `).join('');
         }
