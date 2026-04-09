@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -33,7 +33,7 @@ export default function LeaderboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const fetchLeaderboard = async () => {
+  const fetchLeaderboard = useCallback(async () => {
     try {
       const response = await leaderboardApi.getLeaderboard(type, 100);
       setLeaderboard(response.data);
@@ -42,11 +42,11 @@ export default function LeaderboardScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [type]);
 
   useEffect(() => {
     fetchLeaderboard();
-  }, [type]);
+  }, [fetchLeaderboard]);
 
   const onRefresh = async () => {
     setRefreshing(true);

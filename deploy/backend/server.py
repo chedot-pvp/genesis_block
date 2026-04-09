@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Query, Header
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -15,6 +15,7 @@ import urllib.parse
 import asyncio
 import secrets
 import bcrypt
+import jwt
 from contextlib import asynccontextmanager
 from fastapi.responses import HTMLResponse
 
@@ -28,6 +29,28 @@ db = client[os.environ.get('DB_NAME', 'genesis_block')]
 
 # Telegram Bot Token
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+GENESIS_DEBUG = os.environ.get('GENESIS_DEBUG', '0') == '1'
+GENESIS_ADMIN_INITIAL_PASSWORD = os.environ.get('GENESIS_ADMIN_INITIAL_PASSWORD', '').strip()
+GENESIS_JWT_SECRET = (
+    os.environ.get('GENESIS_JWT_SECRET', '').strip()
+    or TELEGRAM_BOT_TOKEN
+    or "dev-insecure-jwt-secret-change-me"
+)
+GENESIS_JWT_ALGORITHM = "HS256"
+GENESIS_JWT_EXPIRES_DAYS = int(os.environ.get('GENESIS_JWT_EXPIRES_DAYS', '30'))
+
+def parse_cors_origins() -> list[str]:
+    raw = os.environ.get('GENESIS_CORS_ORIGINS', '').strip()
+    if raw:
+        return [o.strip() for o in raw.split(',') if o.strip()]
+    return [
+        "https://game5.chedot.com",
+        "https://www.game5.chedot.com",
+        "http://localhost:8081",
+        "http://localhost:19006",
+    ]
+
+GENESIS_CORS_ORIGINS = parse_cors_origins()
 
 # Game Constants
 MAX_SUPPLY_SATOSHI = 2_100_000_000_000_000  # 21 million BTC in satoshi
@@ -121,10 +144,10 @@ class TelegramAuthRequest(BaseModel):
 
 class BuyMinerRequest(BaseModel):
     miner_id: str
-    quantity: int = 1
+    quantity: int = Field(default=1, ge=1, le=100)
 
 class ExchangeRequest(BaseModel):
-    amount: int  # satoshi for sell, stars for buy
+    amount: int = Field(..., gt=0)  # satoshi for sell, stars for buy
 
 class InitResponse(BaseModel):
     user: dict
@@ -133,16 +156,40 @@ class InitResponse(BaseModel):
     user_miners: dict
     exchange_rate: dict
 
+
+def create_user_token(user_id: str) -> str:
+    payload = {
+        "sub": user_id,
+        "exp": datetime.utcnow() + timedelta(days=GENESIS_JWT_EXPIRES_DAYS),
+        "iat": datetime.utcnow(),
+    }
+    return jwt.encode(payload, GENESIS_JWT_SECRET, algorithm=GENESIS_JWT_ALGORITHM)
+
+
+def extract_user_id_from_auth(authorization: Optional[str]) -> str:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing authorization token")
+    token = authorization[7:].strip()
+    try:
+        payload = jwt.decode(token, GENESIS_JWT_SECRET, algorithms=[GENESIS_JWT_ALGORITHM])
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid authorization token")
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid authorization token")
+    return user_id
+
 # ============== HELPER FUNCTIONS ==============
 
 def validate_telegram_init_data(init_data: str) -> dict:
     """Validate Telegram WebApp initData and extract user info"""
     if not TELEGRAM_BOT_TOKEN:
-        # For testing without token - parse but don't validate
-        parsed = dict(urllib.parse.parse_qsl(init_data))
-        if 'user' in parsed:
-            import json
-            return json.loads(parsed['user'])
+        if GENESIS_DEBUG:
+            # Debug-only fallback to allow local development without Telegram Bot token.
+            parsed = dict(urllib.parse.parse_qsl(init_data))
+            if 'user' in parsed:
+                import json
+                return json.loads(parsed['user'])
         return None
     
     try:
@@ -151,6 +198,13 @@ def validate_telegram_init_data(init_data: str) -> dict:
         # Extract hash
         received_hash = parsed.pop('hash', None)
         if not received_hash:
+            return None
+
+        auth_date_raw = parsed.get('auth_date')
+        if not auth_date_raw:
+            return None
+        auth_date = int(auth_date_raw)
+        if abs(int(datetime.utcnow().timestamp()) - auth_date) > 86400:
             return None
         
         # Create data check string
@@ -340,20 +394,26 @@ async def lifespan(app: FastAPI):
             upsert=True
         )
     
-    # Initialize admin user
+    # Initialize admin user if configured.
     admin = await db.admin_users.find_one({"username": "mervn"})
     if not admin:
-        password = "Xk9mP2vL7n"  # Generated password
-        password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        admin_user = {
-            "id": str(uuid.uuid4()),
-            "username": "mervn",
-            "password_hash": password_hash,
-            "created_at": datetime.utcnow(),
-            "is_active": True
-        }
-        await db.admin_users.insert_one(admin_user)
-        logging.info(f"Admin user 'mervn' created with password: {password}")
+        if GENESIS_ADMIN_INITIAL_PASSWORD:
+            password_hash = bcrypt.hashpw(
+                GENESIS_ADMIN_INITIAL_PASSWORD.encode(), bcrypt.gensalt()
+            ).decode()
+            admin_user = {
+                "id": str(uuid.uuid4()),
+                "username": "mervn",
+                "password_hash": password_hash,
+                "created_at": datetime.utcnow(),
+                "is_active": True
+            }
+            await db.admin_users.insert_one(admin_user)
+            logging.info("Admin user 'mervn' created from GENESIS_ADMIN_INITIAL_PASSWORD")
+        else:
+            logging.warning(
+                "Admin user not initialized: set GENESIS_ADMIN_INITIAL_PASSWORD to enable first login."
+            )
     
     # Start block generation task
     block_generation_task = asyncio.create_task(block_generation_loop())
@@ -384,7 +444,7 @@ async def telegram_auth(request: TelegramAuthRequest):
     user_data = validate_telegram_init_data(request.init_data)
     
     # For development/testing, allow mock data
-    if not user_data and request.init_data.startswith("mock_"):
+    if GENESIS_DEBUG and not user_data and request.init_data.startswith("mock_"):
         parts = request.init_data.split("_")
         telegram_id = int(parts[1]) if len(parts) > 1 else 12345
         user_data = {
@@ -433,10 +493,17 @@ async def telegram_auth(request: TelegramAuthRequest):
     
     # Clean MongoDB _id
     user.pop('_id', None)
-    return {"user": user, "token": user['id']}
+    return {"user": user, "token": create_user_token(user['id'])}
 
 @api_router.post("/v1/auth/referral")
-async def apply_referral(user_id: str, referral_code: str):
+async def apply_referral(
+    referral_code: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    user_id = extract_user_id_from_auth(authorization)
+    referral_code = (referral_code or "").strip()
+    if not referral_code:
+        raise HTTPException(status_code=400, detail="Referral code is required")
     """Apply referral code for a user"""
     # Find the user
     user = await db.users.find_one({"id": user_id})
@@ -480,7 +547,8 @@ async def apply_referral(user_id: str, referral_code: str):
 # ============== INIT ENDPOINT ==============
 
 @api_router.get("/v1/init")
-async def get_init(user_id: str):
+async def get_init(authorization: Optional[str] = Header(default=None)):
+    user_id = extract_user_id_from_auth(authorization)
     """Get all initial data for the game"""
     user = await db.users.find_one({"id": user_id})
     if not user:
@@ -546,7 +614,11 @@ async def get_miners():
     return miners
 
 @api_router.post("/v1/miners/buy")
-async def buy_miner(user_id: str, request: BuyMinerRequest):
+async def buy_miner(
+    request: BuyMinerRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    user_id = extract_user_id_from_auth(authorization)
     """Purchase a miner"""
     user = await db.users.find_one({"id": user_id})
     if not user:
@@ -606,7 +678,11 @@ async def get_exchange_rate():
     return calculate_exchange_rate(game_state['current_epoch'])
 
 @api_router.post("/v1/exchange/buy")
-async def buy_btc_with_stars(user_id: str, request: ExchangeRequest):
+async def buy_btc_with_stars(
+    request: ExchangeRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    user_id = extract_user_id_from_auth(authorization)
     """Buy BTC with Stars"""
     user = await db.users.find_one({"id": user_id})
     if not user:
@@ -638,7 +714,11 @@ async def buy_btc_with_stars(user_id: str, request: ExchangeRequest):
     return {"user": updated_user, "rate": rate}
 
 @api_router.post("/v1/exchange/sell")
-async def sell_btc_for_stars(user_id: str, request: ExchangeRequest):
+async def sell_btc_for_stars(
+    request: ExchangeRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    user_id = extract_user_id_from_auth(authorization)
     """Sell BTC for Stars"""
     user = await db.users.find_one({"id": user_id})
     if not user:
@@ -676,6 +756,7 @@ async def sell_btc_for_stars(user_id: str, request: ExchangeRequest):
 
 @api_router.get("/v1/leaderboard")
 async def get_leaderboard(type: str = "balance", limit: int = 100):
+    limit = max(1, min(limit, 200))
     """Get leaderboard by type: balance, power, referrals"""
     sort_field = {
         "balance": "balance_satoshi",
@@ -697,7 +778,8 @@ async def get_leaderboard(type: str = "balance", limit: int = 100):
 # ============== REFERRAL ENDPOINTS ==============
 
 @api_router.get("/v1/referral/info")
-async def get_referral_info(user_id: str):
+async def get_referral_info(authorization: Optional[str] = Header(default=None)):
+    user_id = extract_user_id_from_auth(authorization)
     """Get referral statistics for a user"""
     user = await db.users.find_one({"id": user_id})
     if not user:
@@ -721,6 +803,7 @@ async def get_referral_info(user_id: str):
 
 @api_router.get("/v1/referral/top")
 async def get_top_referrers(limit: int = 10):
+    limit = max(1, min(limit, 100))
     """Get top referrers"""
     users = await db.users.find(
         {"total_referrals": {"$gt": 0}},
@@ -758,7 +841,8 @@ async def get_block_info():
 # ============== INSTANT MINING (Tap to mine) ==============
 
 @api_router.post("/v1/mine/instant")
-async def instant_mine(user_id: str):
+async def instant_mine(authorization: Optional[str] = Header(default=None)):
+    user_id = extract_user_id_from_auth(authorization)
     """Instant mining - gives 1 second worth of mining"""
     user = await db.users.find_one({"id": user_id})
     if not user:
@@ -823,16 +907,25 @@ def generate_session_token() -> str:
     return secrets.token_urlsafe(32)
 
 async def init_admin_user():
-    """Initialize admin user if not exists"""
+    """Initialize admin user if configured and missing."""
     admin = await db.admin_users.find_one({"username": "mervn"})
-    if not admin:
-        password = "Xk9#mP2$vL7n"  # Generated password
-        admin_user = AdminUser(
-            username="mervn",
-            password_hash=hash_password(password)
-        ).dict()
-        await db.admin_users.insert_one(admin_user)
-        logging.info(f"Admin user 'mervn' created with password: {password}")
+    if admin:
+        return
+    if not GENESIS_ADMIN_INITIAL_PASSWORD:
+        return
+    admin_user = AdminUser(
+        username="mervn",
+        password_hash=hash_password(GENESIS_ADMIN_INITIAL_PASSWORD)
+    ).dict()
+    await db.admin_users.insert_one(admin_user)
+    logging.info("Admin user 'mervn' created from GENESIS_ADMIN_INITIAL_PASSWORD")
+
+def _extract_admin_token(authorization: Optional[str], token: Optional[str]) -> Optional[str]:
+    if authorization and authorization.startswith("Bearer "):
+        return authorization[7:].strip()
+    if token:
+        return token.strip()
+    return None
 
 @api_router.post("/admin/login")
 async def admin_login(request: AdminLoginRequest):
@@ -858,16 +951,24 @@ async def verify_admin_token(token: str) -> bool:
     return True
 
 @api_router.get("/admin/verify")
-async def admin_verify(token: str):
+async def admin_verify(
+    token: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
     """Verify admin token"""
-    if not await verify_admin_token(token):
+    admin_token = _extract_admin_token(authorization, token)
+    if not admin_token or not await verify_admin_token(admin_token):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     return {"valid": True}
 
 @api_router.get("/admin/stats")
-async def admin_stats(token: str):
+async def admin_stats(
+    token: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
     """Get game statistics"""
-    if not await verify_admin_token(token):
+    admin_token = _extract_admin_token(authorization, token)
+    if not admin_token or not await verify_admin_token(admin_token):
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     total_users = await db.users.count_documents({})
@@ -900,10 +1001,17 @@ async def admin_stats(token: str):
     }
 
 @api_router.get("/admin/users")
-async def admin_get_users(token: str, skip: int = 0, limit: int = 50):
+async def admin_get_users(
+    skip: int = 0,
+    limit: int = 50,
+    token: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
     """Get all users"""
-    if not await verify_admin_token(token):
+    admin_token = _extract_admin_token(authorization, token)
+    if not admin_token or not await verify_admin_token(admin_token):
         raise HTTPException(status_code=401, detail="Unauthorized")
+    limit = max(1, min(limit, 200))
     
     users = await db.users.find().skip(skip).limit(limit).to_list(limit)
     total = await db.users.count_documents({})
@@ -914,9 +1022,14 @@ async def admin_get_users(token: str, skip: int = 0, limit: int = 50):
     return {"users": users, "total": total, "skip": skip, "limit": limit}
 
 @api_router.get("/admin/users/{user_id}")
-async def admin_get_user(user_id: str, token: str):
+async def admin_get_user(
+    user_id: str,
+    token: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
     """Get specific user"""
-    if not await verify_admin_token(token):
+    admin_token = _extract_admin_token(authorization, token)
+    if not admin_token or not await verify_admin_token(admin_token):
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     user = await db.users.find_one({"id": user_id})
@@ -931,9 +1044,15 @@ async def admin_get_user(user_id: str, token: str):
     return {"user": user, "miners": user_miners}
 
 @api_router.put("/admin/users/{user_id}")
-async def admin_update_user(user_id: str, token: str, request: AdminUpdateUserRequest):
+async def admin_update_user(
+    user_id: str,
+    request: AdminUpdateUserRequest,
+    token: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
     """Update user"""
-    if not await verify_admin_token(token):
+    admin_token = _extract_admin_token(authorization, token)
+    if not admin_token or not await verify_admin_token(admin_token):
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     user = await db.users.find_one({"id": user_id})
@@ -958,9 +1077,14 @@ async def admin_update_user(user_id: str, token: str, request: AdminUpdateUserRe
     return {"user": updated_user}
 
 @api_router.delete("/admin/users/{user_id}")
-async def admin_delete_user(user_id: str, token: str):
+async def admin_delete_user(
+    user_id: str,
+    token: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
     """Delete user"""
-    if not await verify_admin_token(token):
+    admin_token = _extract_admin_token(authorization, token)
+    if not admin_token or not await verify_admin_token(admin_token):
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     result = await db.users.delete_one({"id": user_id})
@@ -972,9 +1096,13 @@ async def admin_delete_user(user_id: str, token: str):
     return {"deleted": True}
 
 @api_router.post("/admin/reset-game")
-async def admin_reset_game(token: str):
+async def admin_reset_game(
+    token: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
     """Reset game state (dangerous!)"""
-    if not await verify_admin_token(token):
+    admin_token = _extract_admin_token(authorization, token)
+    if not admin_token or not await verify_admin_token(admin_token):
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     # Reset game state
@@ -1001,10 +1129,17 @@ async def admin_reset_game(token: str):
     return {"reset": True}
 
 @api_router.get("/admin/blocks")
-async def admin_get_blocks(token: str, skip: int = 0, limit: int = 50):
+async def admin_get_blocks(
+    skip: int = 0,
+    limit: int = 50,
+    token: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
     """Get block history"""
-    if not await verify_admin_token(token):
+    admin_token = _extract_admin_token(authorization, token)
+    if not admin_token or not await verify_admin_token(admin_token):
         raise HTTPException(status_code=401, detail="Unauthorized")
+    limit = max(1, min(limit, 200))
     
     blocks = await db.block_history.find().sort("block_number", -1).skip(skip).limit(limit).to_list(limit)
     total = await db.block_history.count_documents({})
@@ -1176,6 +1311,7 @@ ADMIN_HTML = '''
     <script>
         const API_BASE = '/api';
         let token = localStorage.getItem('admin_token');
+        const authHeaders = () => token ? { 'Authorization': `Bearer ${token}` } : {};
         
         function formatNumber(num) {
             if (num >= 1e12) return (num / 1e12).toFixed(2) + 'T';
@@ -1193,7 +1329,7 @@ ADMIN_HTML = '''
         async function checkAuth() {
             if (!token) return showLogin();
             try {
-                const res = await fetch(`${API_BASE}/admin/verify?token=${token}`);
+                const res = await fetch(`${API_BASE}/admin/verify`, { headers: authHeaders() });
                 if (!res.ok) throw new Error();
                 showAdmin();
             } catch {
@@ -1250,7 +1386,7 @@ ADMIN_HTML = '''
         }
         
         async function loadStats() {
-            const res = await fetch(`${API_BASE}/admin/stats?token=${token}`);
+            const res = await fetch(`${API_BASE}/admin/stats`, { headers: authHeaders() });
             const data = await res.json();
             document.getElementById('stats-grid').innerHTML = `
                 <div class="stat-card"><h3>Всего игроков</h3><div class="value">${data.total_users}</div></div>
@@ -1265,7 +1401,7 @@ ADMIN_HTML = '''
         }
         
         async function loadUsers() {
-            const res = await fetch(`${API_BASE}/admin/users?token=${token}&limit=100`);
+            const res = await fetch(`${API_BASE}/admin/users?limit=100`, { headers: authHeaders() });
             const data = await res.json();
             document.getElementById('users-table').innerHTML = data.users.map(u => `
                 <tr>
@@ -1285,7 +1421,7 @@ ADMIN_HTML = '''
         }
         
         async function loadBlocks() {
-            const res = await fetch(`${API_BASE}/admin/blocks?token=${token}&limit=50`);
+            const res = await fetch(`${API_BASE}/admin/blocks?limit=50`, { headers: authHeaders() });
             const data = await res.json();
             document.getElementById('blocks-table').innerHTML = data.blocks.map(b => `
                 <tr>
@@ -1315,9 +1451,9 @@ ADMIN_HTML = '''
         document.getElementById('edit-form').onsubmit = async (e) => {
             e.preventDefault();
             const id = document.getElementById('edit-user-id').value;
-            await fetch(`${API_BASE}/admin/users/${id}?token=${token}`, {
+            await fetch(`${API_BASE}/admin/users/${id}`, {
                 method: 'PUT',
-                headers: {'Content-Type': 'application/json'},
+                headers: { ...authHeaders(), 'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     balance_satoshi: parseInt(document.getElementById('edit-balance').value),
                     balance_stars: parseInt(document.getElementById('edit-stars').value),
@@ -1331,7 +1467,7 @@ ADMIN_HTML = '''
         
         async function deleteUser(id) {
             if (!confirm('Удалить этого игрока?')) return;
-            await fetch(`${API_BASE}/admin/users/${id}?token=${token}`, {method: 'DELETE'});
+            await fetch(`${API_BASE}/admin/users/${id}`, {method: 'DELETE', headers: authHeaders()});
             loadUsers();
             loadStats();
         }
@@ -1339,7 +1475,7 @@ ADMIN_HTML = '''
         async function confirmResetGame() {
             if (!confirm('ВНИМАНИЕ! Это сбросит ВСЮ игру! Все балансы обнулятся! Продолжить?')) return;
             if (!confirm('Вы уверены? Это действие необратимо!')) return;
-            await fetch(`${API_BASE}/admin/reset-game?token=${token}`, {method: 'POST'});
+            await fetch(`${API_BASE}/admin/reset-game`, {method: 'POST', headers: authHeaders()});
             loadUsers();
             loadStats();
             alert('Игра сброшена!');
@@ -1358,18 +1494,13 @@ ADMIN_HTML = '''
 async def admin_panel():
     return ADMIN_HTML
 
-# Initialize admin user on startup
-@app.on_event("startup")
-async def startup_init_admin():
-    await init_admin_user()
-
 # Include the router in the main app (after all routes are defined)
 app.include_router(api_router)
 
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["*"],
+    allow_origins=GENESIS_CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

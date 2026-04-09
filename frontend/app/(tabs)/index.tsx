@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -51,13 +51,17 @@ export default function MiningScreen() {
         useNativeDriver: true,
       })
     ).start();
-  }, []);
+  }, [pulseAnim, rotateAnim]);
+
+  const refreshBlockInfoSafe = useCallback(() => {
+    void refreshBlockInfo();
+  }, [refreshBlockInfo]);
 
   useEffect(() => {
     const timer = setInterval(() => {
       setTimeToBlock((prev) => {
         if (prev <= 1) {
-          refreshBlockInfo();
+          refreshBlockInfoSafe();
           return 30;
         }
         return prev - 1;
@@ -65,14 +69,14 @@ export default function MiningScreen() {
     }, 1000);
 
     const blockRefresh = setInterval(() => {
-      refreshBlockInfo();
+      refreshBlockInfoSafe();
     }, 30000);
 
     return () => {
       clearInterval(timer);
       clearInterval(blockRefresh);
     };
-  }, []);
+  }, [refreshBlockInfoSafe]);
 
   const onRefresh = async () => {
     setRefreshing(true);

@@ -60,6 +60,7 @@ const storage = {
     }
   }
 };
+const TOKEN_KEY = 'genesis_token';
 
 interface GameStore {
   user: User | null;
@@ -94,6 +95,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
   loadSavedSession: () => {
     try {
       const saved = storage.getItem('genesis_user');
+      const token = storage.getItem(TOKEN_KEY);
+      if (!token) {
+        storage.removeItem('genesis_user');
+        return null;
+      }
       if (saved) {
         const user = JSON.parse(saved);
         set({ user });
@@ -109,14 +115,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const response = await authApi.telegramAuth(initData);
-      const { user } = response.data;
+      const { user, token } = response.data;
+      if (!token) {
+        throw new Error('Missing authentication token');
+      }
       
       // Save to storage
       storage.setItem('genesis_user', JSON.stringify(user));
+      storage.setItem(TOKEN_KEY, token);
       set({ user });
       
       // Fetch full init data
-      const initResponse = await gameApi.getInit(user.id);
+      const initResponse = await gameApi.getInit();
       const data = initResponse.data;
       
       // Update storage with full user data
@@ -142,7 +152,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     
     set({ isLoading: true });
     try {
-      const response = await gameApi.getInit(user.id);
+      const response = await gameApi.getInit();
       const data = response.data;
       
       // Update storage
@@ -157,9 +167,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
         isLoading: false,
       });
     } catch (error: any) {
-      // If user not found, logout
-      if (error.response?.status === 404) {
+      // If session invalid, logout
+      if (error.response?.status === 404 || error.response?.status === 401) {
         storage.removeItem('genesis_user');
+        storage.removeItem(TOKEN_KEY);
         set({ user: null, gameState: null, miners: [], userMiners: {}, exchangeRate: null, isLoading: false });
       } else {
         set({ error: error.message, isLoading: false });
@@ -172,7 +183,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!user) return false;
     
     try {
-      const response = await minersApi.buyMiner(user.id, minerId, quantity);
+      const response = await minersApi.buyMiner(minerId, quantity);
       const { user: updatedUser, user_miners } = response.data;
       storage.setItem('genesis_user', JSON.stringify(updatedUser));
       set({ user: updatedUser, userMiners: user_miners });
@@ -188,7 +199,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!user) return 0;
     
     try {
-      const response = await gameApi.instantMine(user.id);
+      const response = await gameApi.instantMine();
       const { reward, user: updatedUser } = response.data;
       storage.setItem('genesis_user', JSON.stringify(updatedUser));
       set({ user: updatedUser });
@@ -215,6 +226,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   clearError: () => set({ error: null }),
   logout: () => {
     storage.removeItem('genesis_user');
+    storage.removeItem(TOKEN_KEY);
     set({ 
       user: null, 
       gameState: null, 

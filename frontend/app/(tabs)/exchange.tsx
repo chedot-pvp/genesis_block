@@ -59,7 +59,7 @@ export default function ExchangeScreen() {
           Alert.alert('Ошибка', 'Недостаточно Stars');
           return;
         }
-        const response = await exchangeApi.buyBtc(user.id, numAmount);
+        const response = await exchangeApi.buyBtc(numAmount);
         setUser(response.data.user);
         Alert.alert('Успех', `Вы получили ${formatSatoshi(calculateResult())}`);
       } else {
@@ -67,7 +67,7 @@ export default function ExchangeScreen() {
           Alert.alert('Ошибка', 'Недостаточно BTC');
           return;
         }
-        const response = await exchangeApi.sellBtc(user.id, numAmount);
+        const response = await exchangeApi.sellBtc(numAmount);
         setUser(response.data.user);
         Alert.alert('Успех', `Вы получили ${calculateResult()} Stars`);
       }

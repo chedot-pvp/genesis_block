@@ -1,18 +1,16 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useGameStore } from '../src/store/gameStore';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, isLoading, error, user, fetchInit, loadSavedSession } = useGameStore();
+  const { login, isLoading, error, fetchInit, loadSavedSession } = useGameStore();
   const [localLoading, setLocalLoading] = useState(false);
   const [initialCheck, setInitialCheck] = useState(true);
 
-  useEffect(() => {
-    // Check saved session on mount
-    const checkSession = async () => {
+  const checkSession = useCallback(async () => {
       const savedUser = loadSavedSession();
       if (savedUser) {
         try {
@@ -27,10 +25,11 @@ export default function LoginScreen() {
         }
       }
       setInitialCheck(false);
-    };
-    
-    checkSession();
-  }, []);
+  }, [fetchInit, loadSavedSession, router]);
+
+  useEffect(() => {
+    void checkSession();
+  }, [checkSession]);
 
   const handleLogin = async () => {
     setLocalLoading(true);
@@ -46,8 +45,11 @@ export default function LoginScreen() {
       }
 
       if (!initData) {
-        const mockId = Math.floor(Math.random() * 1000000) + 100000;
-        initData = `mock_${mockId}`;
+        Alert.alert(
+          'Telegram required',
+          'Open this app from Telegram to sign in securely.'
+        );
+        return;
       }
 
       await login(initData);

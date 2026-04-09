@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -36,21 +36,21 @@ export default function FriendsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const fetchReferralInfo = async () => {
+  const fetchReferralInfo = useCallback(async () => {
     if (!user) return;
     try {
-      const response = await referralApi.getInfo(user.id);
+      const response = await referralApi.getInfo();
       setReferralInfo(response.data);
     } catch (error) {
       console.error('Failed to fetch referral info:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     fetchReferralInfo();
-  }, [user]);
+  }, [fetchReferralInfo]);
 
   const onRefresh = async () => {
     setRefreshing(true);

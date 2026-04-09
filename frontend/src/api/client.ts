@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+const TOKEN_STORAGE_KEY = 'genesis_token';
 
 export const api = axios.create({
   baseURL: `${BACKEND_URL}/api/v1`,
@@ -10,35 +11,46 @@ export const api = axios.create({
   },
 });
 
+api.interceptors.request.use((config) => {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const token = window.localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (token) {
+      config.headers = config.headers ?? {};
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+  }
+  return config;
+});
+
 // Auth API
 export const authApi = {
   telegramAuth: (initData: string) =>
     api.post('/auth/telegram', { init_data: initData }),
-  applyReferral: (userId: string, referralCode: string) =>
-    api.post(`/auth/referral?user_id=${userId}&referral_code=${referralCode}`),
+  applyReferral: (referralCode: string) =>
+    api.post(`/auth/referral?referral_code=${encodeURIComponent(referralCode)}`),
 };
 
 // Game API
 export const gameApi = {
-  getInit: (userId: string) => api.get(`/init?user_id=${userId}`),
+  getInit: () => api.get('/init'),
   getBlockInfo: () => api.get('/block/info'),
-  instantMine: (userId: string) => api.post(`/mine/instant?user_id=${userId}`),
+  instantMine: () => api.post('/mine/instant'),
 };
 
 // Miners API
 export const minersApi = {
   getMiners: () => api.get('/miners'),
-  buyMiner: (userId: string, minerId: string, quantity: number = 1) =>
-    api.post(`/miners/buy?user_id=${userId}`, { miner_id: minerId, quantity }),
+  buyMiner: (minerId: string, quantity: number = 1) =>
+    api.post('/miners/buy', { miner_id: minerId, quantity }),
 };
 
 // Exchange API
 export const exchangeApi = {
   getRate: () => api.get('/exchange/rate'),
-  buyBtc: (userId: string, starsAmount: number) =>
-    api.post(`/exchange/buy?user_id=${userId}`, { amount: starsAmount }),
-  sellBtc: (userId: string, satoshiAmount: number) =>
-    api.post(`/exchange/sell?user_id=${userId}`, { amount: satoshiAmount }),
+  buyBtc: (starsAmount: number) =>
+    api.post('/exchange/buy', { amount: starsAmount }),
+  sellBtc: (satoshiAmount: number) =>
+    api.post('/exchange/sell', { amount: satoshiAmount }),
 };
 
 // Leaderboard API
@@ -49,6 +61,6 @@ export const leaderboardApi = {
 
 // Referral API
 export const referralApi = {
-  getInfo: (userId: string) => api.get(`/referral/info?user_id=${userId}`),
+  getInfo: () => api.get('/referral/info'),
   getTopReferrers: (limit: number = 10) => api.get(`/referral/top?limit=${limit}`),
 };

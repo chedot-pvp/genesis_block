@@ -23,7 +23,7 @@ export const MinerCard: React.FC<MinerCardProps> = ({
   currentBlock,
   userBalance,
 }) => {
-  const { buyMiner, clearError } = useGameStore();
+  const { buyMiner } = useGameStore();
   const isUnlocked = currentBlock >= miner.unlock_block;
   const canAfford = userBalance >= miner.price_satoshi;
   const isFree = miner.price_satoshi === 0;
