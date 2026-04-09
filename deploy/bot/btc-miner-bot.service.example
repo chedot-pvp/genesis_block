@@ -1,0 +1,15 @@
+[Unit]
+Description=BTC Miner history bot (Telegram polling, game5 mini app)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/genesis-block/deploy/bot
+# Requires: python3, python3-requests (or a venv with requests)
+ExecStart=/usr/bin/python3 /opt/genesis-block/deploy/bot/btc_miner_bot.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

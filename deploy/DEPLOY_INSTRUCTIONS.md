@@ -12,8 +12,8 @@
 ### Подключение к серверу
 ```bash
 ssh root@89.111.134.240
-# Пароль: 4t1niic6ib6d
 ```
+Используйте SSH-ключ или учётные данные, выданные администратором. Не коммитьте пароли в репозиторий.
 
 ### Шаг 1: Установка Docker (если не установлен)
 ```bash
@@ -39,19 +39,22 @@ cd /opt/genesis-block
 ### Шаг 3: Загрузка файлов
 Загрузить содержимое папки `/app/deploy/` на сервер в `/opt/genesis-block/`
 
-Структура должна быть:
+Структура должна быть (как в репозитории, папка `deploy/`):
 ```
-/opt/genesis-block/
+/opt/genesis-block/deploy/
 ├── backend/
 │   ├── Dockerfile
 │   ├── server.py
-│   ├── requirements.txt
-│   └── .env
+│   └── requirements.txt
+├── bot/
+│   ├── btc_miner_bot.py
+│   └── btc-miner-bot.service.example
 ├── frontend-web/
 │   ├── index.html
 │   ├── _expo/
 │   └── ...
 ├── docker-compose.yml
+├── docker-compose.dev.yml
 ├── nginx.conf
 ├── .env
 └── ssl/
@@ -77,23 +80,31 @@ cp /etc/letsencrypt/live/game5.chedot.com/privkey.pem /opt/genesis-block/ssl/
 ```
 
 ### Шаг 5: Запуск приложения
+Базовый `docker-compose.yml` слушает только **127.0.0.1:8085** (HTTP) и **127.0.0.1:8445** (HTTPS); MongoDB и backend наружу не проброшены — дальше обычно стоит системный nginx с прокси на 8445.
+
 ```bash
-cd /opt/genesis-block
+cd /opt/genesis-block/deploy
 
-# Запустить все сервисы
-docker-compose up -d
+docker compose up -d --build
 
-# Проверить статус
-docker-compose ps
-
-# Посмотреть логи
-docker-compose logs -f
+docker compose ps
+docker compose logs -f
 ```
+
+Локальная разработка с открытыми портами (Mongo **27017**, API **8001**, nginx **80/443**):
+
+```bash
+cd /opt/genesis-block/deploy
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
+
+### Шаг 5b: Бот @btc_miner_history_bot (опционально)
+Файл `deploy/bot/btc_miner_bot.py` читает `TELEGRAM_BOT_TOKEN` и опционально `GENESIS_MINIAPP_URL` из `deploy/.env`. Пример unit: `deploy/bot/btc-miner-bot.service.example` → скопировать в `/etc/systemd/system/btc-miner-bot.service`, затем `systemctl daemon-reload && systemctl enable --now btc-miner-bot`.
 
 ### Шаг 6: Проверка работы
 ```bash
-# Проверить API
-curl http://localhost:8001/api/
+# API через контейнерный nginx (как на VPS за reverse-proxy)
+curl -sk https://127.0.0.1:8445/api/health
 
 # Проверить сайт
 curl -I https://game5.chedot.com
@@ -177,8 +188,9 @@ systemctl restart nginx
 ### Логи
 ```bash
 # Docker
-docker-compose logs -f backend
-docker-compose logs -f frontend
+cd /opt/genesis-block/deploy
+docker compose logs -f backend
+docker compose logs -f frontend
 
 # Systemd
 journalctl -u genesis-backend -f
@@ -188,7 +200,8 @@ journalctl -u nginx -f
 ### Перезапуск
 ```bash
 # Docker
-docker-compose restart
+cd /opt/genesis-block/deploy
+docker compose restart
 
 # Systemd
 systemctl restart genesis-backend
@@ -197,11 +210,11 @@ systemctl restart nginx
 
 ### Обновление
 ```bash
-cd /opt/genesis-block
-docker-compose down
+cd /opt/genesis-block/deploy
+docker compose down
 # Загрузить новые файлы
-docker-compose build --no-cache
-docker-compose up -d
+docker compose build --no-cache
+docker compose up -d
 ```
 
 ---
@@ -234,13 +247,13 @@ ufw allow 443
 # Проверить статус
 systemctl status mongod
 # или для Docker
-docker-compose logs mongodb
+cd /opt/genesis-block/deploy && docker compose logs mongodb
 ```
 
 ### Backend не запускается
 ```bash
 # Проверить логи
-docker-compose logs backend
+cd /opt/genesis-block/deploy && docker compose logs backend
 # или
 journalctl -u genesis-backend -n 50
 ```
