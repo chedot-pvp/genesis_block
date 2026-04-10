@@ -2,9 +2,28 @@ import axios from 'axios';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 const TOKEN_STORAGE_KEY = 'genesis_token';
+const USER_STORAGE_KEY = 'genesis_user';
+
+const resolveApiBaseUrl = () => {
+  const fromEnv = BACKEND_URL.trim();
+  if (fromEnv) {
+    return `${fromEnv.replace(/\/+$/, '')}/api/v2`;
+  }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}/api/v2`;
+  }
+  return 'http://localhost:8085/api/v2';
+};
+
+const clearWebSession = () => {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+    window.localStorage.removeItem(USER_STORAGE_KEY);
+  }
+};
 
 export const api = axios.create({
-  baseURL: `${BACKEND_URL}/api/v2`,
+  baseURL: resolveApiBaseUrl(),
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
@@ -22,12 +41,22 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      clearWebSession();
+    }
+    return Promise.reject(error);
+  }
+);
+
 // Auth API
 export const authApi = {
   telegramAuth: (initData: string) =>
     api.post('/auth/telegram', { init_data: initData }),
   applyReferral: (referralCode: string) =>
-    api.post(`/auth/referral?referral_code=${encodeURIComponent(referralCode)}`),
+    api.post('/auth/referral', { referral_code: referralCode }),
 };
 
 // Game API

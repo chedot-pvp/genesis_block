@@ -1,6 +1,8 @@
 import os
-from pathlib import Path
 from datetime import timedelta
+from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -8,6 +10,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("DJANGO_V2_SECRET_KEY", "django-v2-unsafe-secret-change-me")
 DEBUG = os.getenv("DJANGO_V2_DEBUG", "0") == "1"
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_V2_ALLOWED_HOSTS", "game5.chedot.com,localhost,127.0.0.1").split(",") if h.strip()]
+
+STRICT_ENV = os.getenv("DJANGO_V2_STRICT_ENV", "1" if not DEBUG else "0") == "1"
+JWT_SECRET = os.getenv("DJANGO_V2_JWT_SECRET", "").strip()
+if STRICT_ENV:
+    if SECRET_KEY in {"", "django-v2-unsafe-secret-change-me", "change-me", "unsafe-secret"}:
+        raise ImproperlyConfigured("DJANGO_V2_SECRET_KEY must be set to a strong value")
+    if JWT_SECRET in {"", "django-v2-jwt-secret-change-me", "change-me", "unsafe-secret"}:
+        raise ImproperlyConfigured("DJANGO_V2_JWT_SECRET must be set to a strong value")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -81,11 +91,30 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Protected views use api.views.get_player_id_from_request instead.
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (),
+    "DEFAULT_THROTTLE_CLASSES": (
+        "api.throttles.TelegramAuthRateThrottle",
+        "api.throttles.PlayerMutationRateThrottle",
+    ),
+    "DEFAULT_THROTTLE_RATES": {
+        "telegram_auth": os.getenv("DJANGO_V2_RATE_TELEGRAM_AUTH", "20/minute"),
+        "player_mutation": os.getenv("DJANGO_V2_RATE_PLAYER_MUTATION", "120/minute"),
+    },
 }
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
     "ALGORITHM": "HS256",
-    "SIGNING_KEY": os.getenv("DJANGO_V2_JWT_SECRET", SECRET_KEY),
+    "SIGNING_KEY": JWT_SECRET or SECRET_KEY,
 }
+
+if os.getenv("DJANGO_V2_USE_PROXY_HEADERS", "1") != "0":
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    USE_X_FORWARDED_HOST = True
+
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.getenv("DJANGO_V2_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True

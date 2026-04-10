@@ -37,7 +37,10 @@ export default function FriendsScreen() {
   const [loading, setLoading] = useState(true);
 
   const fetchReferralInfo = useCallback(async () => {
-    if (!user) return;
+    if (!user) {
+      setLoading(false);
+      return;
+    }
     try {
       const response = await referralApi.getInfo();
       setReferralInfo(response.data);

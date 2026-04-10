@@ -11,9 +11,17 @@ from api.models import Player, Miner, PlayerMiner, GameState, Transaction
 class Command(BaseCommand):
     help = "One-shot migration from MongoDB (FastAPI) to PostgreSQL (Django v2)."
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--truncate-transactions",
+            action="store_true",
+            help="Delete existing Transaction rows before importing Mongo transactions.",
+        )
+
     def handle(self, *args, **options):
         mongo_url = os.getenv("MONGO_URL")
         db_name = os.getenv("DB_NAME", "genesis_block")
+        truncate_transactions = bool(options.get("truncate_transactions"))
         if not mongo_url:
             self.stderr.write("MONGO_URL is required")
             return
@@ -102,7 +110,8 @@ class Command(BaseCommand):
                 gs.total_network_power = int(state.get("total_network_power", 1))
                 gs.save()
 
-            Transaction.objects.all().delete()
+            if truncate_transactions:
+                Transaction.objects.all().delete()
             tx_create = []
             for t in txs:
                 p = player_by_legacy.get(str(t.get("user_id", "")))

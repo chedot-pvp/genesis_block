@@ -115,15 +115,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const response = await authApi.telegramAuth(initData);
-      const { user, token } = response.data;
+      const { token } = response.data;
       if (!token) {
         throw new Error('Missing authentication token');
       }
       
-      // Save to storage
-      storage.setItem('genesis_user', JSON.stringify(user));
+      // Save token first, then load full state from /init.
       storage.setItem(TOKEN_KEY, token);
-      set({ user });
       
       // Fetch full init data
       const initResponse = await gameApi.getInit();
@@ -142,6 +140,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       });
     } catch (error: any) {
       const detail = error?.response?.data?.detail;
+      storage.removeItem('genesis_user');
+      storage.removeItem(TOKEN_KEY);
+      set({ user: null, gameState: null, miners: [], userMiners: {}, exchangeRate: null });
       set({ error: detail || error.message || 'Login failed', isLoading: false });
       throw error;
     }
@@ -190,6 +191,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ user: updatedUser, userMiners: user_miners });
       return true;
     } catch (error: any) {
+      if (error?.response?.status === 401) {
+        storage.removeItem('genesis_user');
+        storage.removeItem(TOKEN_KEY);
+        set({ user: null, gameState: null, miners: [], userMiners: {}, exchangeRate: null });
+      }
       set({ error: error.response?.data?.detail || 'Purchase failed' });
       return false;
     }
@@ -206,6 +212,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ user: updatedUser });
       return reward;
     } catch (error: any) {
+      if (error?.response?.status === 401) {
+        storage.removeItem('genesis_user');
+        storage.removeItem(TOKEN_KEY);
+        set({ user: null, gameState: null, miners: [], userMiners: {}, exchangeRate: null });
+      }
       set({ error: error.response?.data?.detail || 'Mining failed' });
       return 0;
     }

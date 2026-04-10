@@ -1,14 +1,18 @@
-# Optional overrides for local development: expose MongoDB, API, and HTTP/S on all interfaces.
+# Optional overrides for local development: expose DB/API/admin/HTTP(S) on all interfaces.
 # Usage from deploy/: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 services:
-  mongodb:
+  postgres_v2:
     ports:
-      - "27017:27017"
+      - "5432:5432"
 
-  backend:
+  backend_v2:
     ports:
-      - "8001:8001"
+      - "8003:8003"
+
+  django_admin:
+    ports:
+      - "8002:8002"
 
   frontend:
     ports:

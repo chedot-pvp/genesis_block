@@ -12,10 +12,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useGameStore } from '../../src/store/gameStore';
 import { formatSatoshi, formatHashrate, formatNumber } from '../../src/utils/formatters';
 
 export default function MiningScreen() {
+  const router = useRouter();
   const { user, gameState, exchangeRate, instantMine, refreshBlockInfo, fetchInit, logout } = useGameStore();
   const [refreshing, setRefreshing] = useState(false);
   const [miningReward, setMiningReward] = useState<number | null>(null);
@@ -95,6 +97,7 @@ export default function MiningScreen() {
   const handleLogout = () => {
     logout();
     setShowMenu(false);
+    router.replace('/');
   };
 
   const spin = rotateAnim.interpolate({

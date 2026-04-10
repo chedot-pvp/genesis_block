@@ -22,13 +22,13 @@ export default function LoginScreen() {
       return;
     }
 
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       const script = document.createElement('script');
       script.src = 'https://telegram.org/js/telegram-web-app.js';
       script.async = true;
       script.setAttribute('data-telegram-webapp', '1');
       script.onload = () => resolve();
-      script.onerror = () => resolve();
+      script.onerror = () => reject(new Error('Failed to load Telegram WebApp SDK'));
       document.head.appendChild(script);
     });
   }, []);
@@ -55,15 +55,6 @@ export default function LoginScreen() {
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
 
-    // Last-resort fallback (unsigned; backend may reject it in production).
-    try {
-      if (tg.initDataUnsafe?.user?.id) {
-        return `mock_${tg.initDataUnsafe.user.id}`;
-      }
-    } catch (e) {
-      console.warn('initDataUnsafe fallback failed:', e);
-    }
-
     // Fallback: Telegram may pass data in URL hash/query.
     try {
       const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
@@ -81,16 +72,18 @@ export default function LoginScreen() {
   }, [ensureTelegramSdk]);
 
   const checkSession = useCallback(async () => {
-      try {
-        // In Telegram WebApp we always refresh auth from current initData.
-        const initData = await getTelegramInitData();
-        if (initData) {
+      // In Telegram WebApp we always refresh auth from current initData.
+      const initData = await getTelegramInitData();
+      if (initData) {
+        try {
           await login(initData);
           router.replace('/(tabs)');
           return;
+        } catch (e) {
+          console.error('Telegram session refresh failed:', e);
+          setInitialCheck(false);
+          return;
         }
-      } catch (e) {
-        console.error('Telegram session refresh failed:', e);
       }
 
       const savedUser = loadSavedSession();
