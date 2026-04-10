@@ -75,10 +75,12 @@ USE_TZ = True
 STATIC_URL = "/static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Do not use SimpleJWT's JWTAuthentication globally: our access tokens carry
+# `player_id` (custom Player model), not Django User `user_id`, which causes
+# "Token contained no recognizable user identification" on every Bearer request.
+# Protected views use api.views.get_player_id_from_request instead.
 REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
-    ),
+    "DEFAULT_AUTHENTICATION_CLASSES": (),
 }
 
 SIMPLE_JWT = {
