@@ -4,7 +4,7 @@ const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 const TOKEN_STORAGE_KEY = 'genesis_token';
 
 export const api = axios.create({
-  baseURL: `${BACKEND_URL}/api/v1`,
+  baseURL: `${BACKEND_URL}/api/v2`,
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',

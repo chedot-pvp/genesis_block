@@ -141,7 +141,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         isLoading: false,
       });
     } catch (error: any) {
-      set({ error: error.message || 'Login failed', isLoading: false });
+      const detail = error?.response?.data?.detail;
+      set({ error: detail || error.message || 'Login failed', isLoading: false });
       throw error;
     }
   },

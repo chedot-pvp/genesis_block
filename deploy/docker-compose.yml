@@ -1,29 +1,81 @@
 
 services:
-  mongodb:
-    image: mongo:7.0
-    container_name: genesis_mongodb
+  postgres_v2:
+    image: postgres:16
+    container_name: genesis_postgres_v2
     restart: always
+    environment:
+      - POSTGRES_DB=${POSTGRES_V2_DB:-genesis_v2}
+      - POSTGRES_USER=${POSTGRES_V2_USER:-genesis}
+      - POSTGRES_PASSWORD=${POSTGRES_V2_PASSWORD:-genesis}
     volumes:
-      - mongodb_data:/data/db
+      - postgres_v2_data:/var/lib/postgresql/data
     networks:
       - genesis_network
 
-  backend:
+  django_admin:
     build:
-      context: ./backend
+      context: ./django_admin
       dockerfile: Dockerfile
-    container_name: genesis_backend
+    container_name: genesis_django_admin
     restart: always
     environment:
-      - MONGO_URL=mongodb://mongodb:27017
-      - DB_NAME=genesis_block
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-change-me-django-secret}
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-0}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-game5.chedot.com,localhost,127.0.0.1}
+      - DJANGO_SUPERUSER_USERNAME=${DJANGO_SUPERUSER_USERNAME:-admin}
+      - DJANGO_SUPERUSER_EMAIL=${DJANGO_SUPERUSER_EMAIL:-admin@game5.chedot.com}
+      - DJANGO_SUPERUSER_PASSWORD=${DJANGO_SUPERUSER_PASSWORD:-admin123456}
+      - DJANGO_DB_PATH=/data/db.sqlite3
+    volumes:
+      - django_admin_data:/data
+    networks:
+      - genesis_network
+
+  backend_v2:
+    build:
+      context: ../django_v2
+      dockerfile: Dockerfile
+    container_name: genesis_backend_v2
+    restart: always
+    environment:
+      - DJANGO_V2_SECRET_KEY=${DJANGO_V2_SECRET_KEY:-django-v2-unsafe-secret-change-me}
+      - DJANGO_V2_JWT_SECRET=${DJANGO_V2_JWT_SECRET:-django-v2-jwt-secret-change-me}
+      - DJANGO_V2_DEBUG=${DJANGO_V2_DEBUG:-0}
+      - DJANGO_V2_ALLOWED_HOSTS=${DJANGO_V2_ALLOWED_HOSTS:-game5.chedot.com,localhost,127.0.0.1}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - GENESIS_DEBUG=${GENESIS_DEBUG:-0}
-      - GENESIS_CORS_ORIGINS=${GENESIS_CORS_ORIGINS:-}
-      - GENESIS_ADMIN_INITIAL_PASSWORD=${GENESIS_ADMIN_INITIAL_PASSWORD:-}
+      - POSTGRES_DB=${POSTGRES_V2_DB:-genesis_v2}
+      - POSTGRES_USER=${POSTGRES_V2_USER:-genesis}
+      - POSTGRES_PASSWORD=${POSTGRES_V2_PASSWORD:-genesis}
+      - POSTGRES_HOST=postgres_v2
+      - POSTGRES_PORT=5432
     depends_on:
-      - mongodb
+      - postgres_v2
+    networks:
+      - genesis_network
+
+  backend_v2_worker:
+    build:
+      context: ../django_v2
+      dockerfile: Dockerfile
+    container_name: genesis_backend_v2_worker
+    restart: always
+    command: ["python", "manage.py", "generate_blocks", "--interval", "30"]
+    environment:
+      - DJANGO_V2_SECRET_KEY=${DJANGO_V2_SECRET_KEY:-django-v2-unsafe-secret-change-me}
+      - DJANGO_V2_JWT_SECRET=${DJANGO_V2_JWT_SECRET:-django-v2-jwt-secret-change-me}
+      - DJANGO_V2_DEBUG=${DJANGO_V2_DEBUG:-0}
+      - DJANGO_V2_ALLOWED_HOSTS=${DJANGO_V2_ALLOWED_HOSTS:-game5.chedot.com,localhost,127.0.0.1}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - GENESIS_DEBUG=${GENESIS_DEBUG:-0}
+      - POSTGRES_DB=${POSTGRES_V2_DB:-genesis_v2}
+      - POSTGRES_USER=${POSTGRES_V2_USER:-genesis}
+      - POSTGRES_PASSWORD=${POSTGRES_V2_PASSWORD:-genesis}
+      - POSTGRES_HOST=postgres_v2
+      - POSTGRES_PORT=5432
+    depends_on:
+      - postgres_v2
     networks:
       - genesis_network
 
@@ -39,12 +91,15 @@ services:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./ssl:/etc/nginx/ssl:ro
     depends_on:
-      - backend
+      - django_admin
+      - backend_v2
+      - backend_v2_worker
     networks:
       - genesis_network
 
 volumes:
-  mongodb_data:
+  django_admin_data:
+  postgres_v2_data:
 
 networks:
   genesis_network:

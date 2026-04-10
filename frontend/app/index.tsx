@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useGameStore } from '../src/store/gameStore';
@@ -9,13 +9,94 @@ export default function LoginScreen() {
   const { login, isLoading, error, fetchInit, loadSavedSession } = useGameStore();
   const [localLoading, setLocalLoading] = useState(false);
   const [initialCheck, setInitialCheck] = useState(true);
+  const [loginStatus, setLoginStatus] = useState<string>('');
+
+  const ensureTelegramSdk = useCallback(async (): Promise<void> => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    // @ts-ignore
+    if (window.Telegram?.WebApp) return;
+
+    const existing = document.querySelector('script[data-telegram-webapp="1"]');
+    if (existing) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      const script = document.createElement('script');
+      script.src = 'https://telegram.org/js/telegram-web-app.js';
+      script.async = true;
+      script.setAttribute('data-telegram-webapp', '1');
+      script.onload = () => resolve();
+      script.onerror = () => resolve();
+      document.head.appendChild(script);
+    });
+  }, []);
+
+  const getTelegramInitData = useCallback(async (): Promise<string> => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return '';
+    await ensureTelegramSdk();
+    // @ts-ignore
+    const tg = window.Telegram?.WebApp;
+    if (!tg) return '';
+
+    try {
+      tg.ready?.();
+      tg.expand?.();
+    } catch (e) {
+      console.warn('Telegram WebApp ready/expand failed:', e);
+    }
+
+    // In some clients initData is not populated immediately.
+    for (let i = 0; i < 10; i += 1) {
+      if (tg.initData && tg.initData.length > 0) {
+        return tg.initData;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+
+    // Last-resort fallback (unsigned; backend may reject it in production).
+    try {
+      if (tg.initDataUnsafe?.user?.id) {
+        return `mock_${tg.initDataUnsafe.user.id}`;
+      }
+    } catch (e) {
+      console.warn('initDataUnsafe fallback failed:', e);
+    }
+
+    // Fallback: Telegram may pass data in URL hash/query.
+    try {
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const queryParams = new URLSearchParams(window.location.search);
+      const fromHash = hashParams.get('tgWebAppData');
+      const fromQuery = queryParams.get('tgWebAppData');
+      const raw = fromHash || fromQuery || '';
+      if (raw) {
+        return decodeURIComponent(raw);
+      }
+    } catch (e) {
+      console.warn('Failed to parse tgWebAppData fallback:', e);
+    }
+    return '';
+  }, [ensureTelegramSdk]);
 
   const checkSession = useCallback(async () => {
+      try {
+        // In Telegram WebApp we always refresh auth from current initData.
+        const initData = await getTelegramInitData();
+        if (initData) {
+          await login(initData);
+          router.replace('/(tabs)');
+          return;
+        }
+      } catch (e) {
+        console.error('Telegram session refresh failed:', e);
+      }
+
       const savedUser = loadSavedSession();
       if (savedUser) {
         try {
           await fetchInit();
-          // If still has user, navigate to main
           if (useGameStore.getState().user) {
             router.replace('/(tabs)');
             return;
@@ -25,41 +106,36 @@ export default function LoginScreen() {
         }
       }
       setInitialCheck(false);
-  }, [fetchInit, loadSavedSession, router]);
+  }, [fetchInit, getTelegramInitData, loadSavedSession, login, router]);
 
   useEffect(() => {
     void checkSession();
   }, [checkSession]);
 
-  const handleLogin = async () => {
+  const handleLogin = useCallback(async () => {
     setLocalLoading(true);
+    setLoginStatus('');
     try {
-      let initData = '';
-      
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        // @ts-ignore
-        const tg = window.Telegram?.WebApp;
-        if (tg?.initData) {
-          initData = tg.initData;
-        }
-      }
+      setLoginStatus('Получаем данные Telegram...');
+      const initData = await getTelegramInitData();
 
       if (!initData) {
-        Alert.alert(
-          'Telegram required',
-          'Open this app from Telegram to sign in securely.'
-        );
+        setLoginStatus('Telegram initData не найден. Закройте и заново откройте Mini App из бота.');
         return;
       }
 
+      setLoginStatus('Выполняем вход...');
       await login(initData);
+      setLoginStatus('');
       router.replace('/(tabs)');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Login error:', err);
+      const message = err?.response?.data?.detail || err?.message || 'Не удалось войти через Telegram';
+      setLoginStatus(message);
     } finally {
       setLocalLoading(false);
     }
-  };
+  }, [getTelegramInitData, login, router]);
 
   // Show loading while checking session
   if (initialCheck) {
@@ -121,6 +197,7 @@ export default function LoginScreen() {
       </TouchableOpacity>
 
       {error && <Text style={styles.errorText}>{error}</Text>}
+      {!!loginStatus && <Text style={styles.errorText}>{loginStatus}</Text>}
 
       <Text style={styles.disclaimer}>
         Симулятор майнинга Bitcoin. Виртуальные BTC не имеют реальной стоимости.
