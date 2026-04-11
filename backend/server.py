@@ -44,8 +44,8 @@ def parse_cors_origins() -> list[str]:
     if raw:
         return [o.strip() for o in raw.split(',') if o.strip()]
     return [
-        "https://game5.chedot.com",
-        "https://www.game5.chedot.com",
+        "https://chedot.com",
+        "https://www.chedot.com",
         "http://localhost:8081",
         "http://localhost:19006",
     ]

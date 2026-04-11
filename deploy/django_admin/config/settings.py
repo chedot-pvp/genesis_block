@@ -6,7 +6,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-dev-secret-change-me")
 DEBUG = os.getenv("DJANGO_DEBUG", "0") == "1"
-ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "game5.chedot.com,localhost,127.0.0.1").split(",") if h.strip()]
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.getenv(
+        "DJANGO_ALLOWED_HOSTS",
+        "chedot.com,www.chedot.com,localhost,127.0.0.1",
+    ).split(",")
+    if h.strip()
+]
 
 # Behind nginx TLS termination: trust X-Forwarded-Proto so request.is_secure() is True.
 if os.getenv("DJANGO_USE_PROXY_HEADERS", "1") != "0":
