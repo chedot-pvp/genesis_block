@@ -9,7 +9,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv("DJANGO_V2_SECRET_KEY", "django-v2-unsafe-secret-change-me")
 DEBUG = os.getenv("DJANGO_V2_DEBUG", "0") == "1"
-ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_V2_ALLOWED_HOSTS", "game5.chedot.com,localhost,127.0.0.1").split(",") if h.strip()]
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.getenv(
+        "DJANGO_V2_ALLOWED_HOSTS",
+        "chedot.com,www.chedot.com,game5.chedot.com,localhost,127.0.0.1",
+    ).split(",")
+    if h.strip()
+]
 
 STRICT_ENV = os.getenv("DJANGO_V2_STRICT_ENV", "1" if not DEBUG else "0") == "1"
 JWT_SECRET = os.getenv("DJANGO_V2_JWT_SECRET", "").strip()
